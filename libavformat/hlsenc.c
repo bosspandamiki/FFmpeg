@@ -129,6 +129,7 @@ typedef struct VariantStream {
     int nb_entries;
     int discontinuity_set;
     int discontinuity;
+    int reference_stream_index;
 
     HLSSegment *segments;
     HLSSegment *last_segment;
@@ -223,6 +224,7 @@ typedef struct HLSContext {
     int http_persistent;
     AVIOContext *m3u8_out;
     AVIOContext *sub_m3u8_out;
+    int64_t timeout;
 } HLSContext;
 
 static int mkdir_p(const char *path) {
@@ -304,7 +306,8 @@ static void set_http_options(AVFormatContext *s, AVDictionary **options, HLSCont
         av_dict_set(options, "user_agent", c->user_agent, 0);
     if (c->http_persistent)
         av_dict_set_int(options, "multiple_requests", 1, 0);
-
+    if (c->timeout >= 0)
+        av_dict_set_int(options, "timeout", c->timeout, 0);
 }
 
 static void write_codec_attr(AVStream *st, VariantStream *vs) {
@@ -2141,7 +2144,7 @@ static int hls_write_packet(AVFormatContext *s, AVPacket *pkt)
     if (vs->has_video) {
         can_split = st->codecpar->codec_type == AVMEDIA_TYPE_VIDEO &&
                     ((pkt->flags & AV_PKT_FLAG_KEY) || (hls->flags & HLS_SPLIT_BY_TIME));
-        is_ref_pkt = st->codecpar->codec_type == AVMEDIA_TYPE_VIDEO;
+        is_ref_pkt = (st->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) && (pkt->stream_index == vs->reference_stream_index);
     }
     if (pkt->pts == AV_NOPTS_VALUE)
         is_ref_pkt = can_split = 0;
@@ -2168,12 +2171,8 @@ static int hls_write_packet(AVFormatContext *s, AVPacket *pkt)
     if (vs->packets_written && can_split && av_compare_ts(pkt->pts - vs->start_pts, st->time_base,
                                    end_pts, AV_TIME_BASE_Q) >= 0) {
         int64_t new_start_pos;
-        char *old_filename = av_strdup(vs->avf->url);
+        char *old_filename = NULL;
         int byterange_mode = (hls->flags & HLS_SINGLE_FILE) || (hls->max_seg_size > 0);
-
-        if (!old_filename) {
-            return AVERROR(ENOMEM);
-        }
 
         av_write_frame(vs->avf, NULL); /* Flush any buffered data */
 
@@ -2215,17 +2214,21 @@ static int hls_write_packet(AVFormatContext *s, AVPacket *pkt)
             if (ret < 0) {
                 av_log(NULL, AV_LOG_ERROR, "Failed to open file '%s'\n",
                     vs->avf->url);
-                av_free(old_filename);
                 return ret;
             }
             write_styp(vs->out);
             ret = flush_dynbuf(vs, &range_length);
             if (ret < 0) {
-                av_free(old_filename);
                 return ret;
             }
             ff_format_io_close(s, &vs->out);
         }
+
+        old_filename = av_strdup(vs->avf->url);
+        if (!old_filename) {
+            return AVERROR(ENOMEM);
+        }
+
         ret = hls_append_segment(s, hls, vs, vs->duration, vs->start_pos, vs->size);
         vs->start_pos = new_start_pos;
         if (ret < 0) {
@@ -2316,6 +2319,12 @@ failed:
 
         if ((hls->flags & HLS_TEMP_FILE) && oc->url[0]) {
             hls_rename_temp_file(s, oc);
+            av_free(old_filename);
+            old_filename = av_strdup(vs->avf->url);
+
+            if (!old_filename) {
+                return AVERROR(ENOMEM);
+            }
         }
 
         /* after av_write_trailer, then duration + 1 duration per packet */
@@ -2491,6 +2500,11 @@ static int hls_init(AVFormatContext *s)
 
         for (j = 0; j < vs->nb_streams; j++) {
             vs->has_video += vs->streams[j]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO;
+            /* Get one video stream to reference for split segments
+             * so use the first video stream index. */
+            if ((vs->has_video == 1) && (vs->streams[j]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO)) {
+                vs->reference_stream_index = vs->streams[j]->index;
+            }
             vs->has_subtitle += vs->streams[j]->codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE;
         }
 
@@ -2780,6 +2794,7 @@ static const AVOption options[] = {
     {"master_pl_name", "Create HLS master playlist with this name", OFFSET(master_pl_name), AV_OPT_TYPE_STRING, {.str = NULL},  0, 0,    E},
     {"master_pl_publish_rate", "Publish master play list every after this many segment intervals", OFFSET(master_publish_rate), AV_OPT_TYPE_INT, {.i64 = 0}, 0, UINT_MAX, E},
     {"http_persistent", "Use persistent HTTP connections", OFFSET(http_persistent), AV_OPT_TYPE_BOOL, {.i64 = 0 }, 0, 1, E },
+    {"timeout", "set timeout for socket I/O operations", OFFSET(timeout), AV_OPT_TYPE_DURATION, { .i64 = -1 }, -1, INT_MAX, .flags = E },
     { NULL },
 };
 

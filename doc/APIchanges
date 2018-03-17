@@ -15,6 +15,30 @@ libavutil:     2017-10-21
 
 API changes, most recent first:
 
+2018-03-15 - e0e72539cf - lavu 56.10.100 - opt.h
+  Add AV_OPT_FLAG_BSF_PARAM
+
+2018-03-07 - xxxxxxx - lavu 56.9.100 - crc.h
+  Add AV_CRC_8_EBU crc variant.
+
+2018-03-xx - xxxxxxx - lavc 58.14.100 - mediacodec.h
+  Change the default behavior of avcodec_flush() on mediacodec
+  video decoders. To restore the previous behavior, use the new
+  delay_flush=1 option.
+
+2018-03-xx - xxxxxxx - lavu 56.8.100 - frame.h
+  Add av_frame_new_side_data_from_buf().
+
+2018-02-xx - xxxxxxx
+  Change av_ripemd_update(), av_murmur3_update() and av_hash_update() length
+  parameter type to size_t at next major bump.
+
+2018-02-xx - xxxxxxx - lavfi 7.12.100 - avfilter.h
+  Add AVFilterContext.extra_hw_frames.
+
+2018-02-xx - xxxxxxx - lavc 58.11.100 - avcodec.h
+  Add AVCodecContext.extra_hw_frames.
+
 2018-02-06 - 0fd475704e - lavd 58.1.100 - avdevice.h
   Deprecate use of av_input_audio_device_next(), av_input_video_device_next(),
   av_output_audio_device_next(), av_output_video_device_next().
